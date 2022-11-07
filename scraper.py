@@ -1,0 +1,80 @@
+import time
+import bs4
+import requests
+import urllib.error
+from urllib.request import urlopen as ureq
+from bs4 import BeautifulSoup as soup
+
+'''
+- To assist my friend with a linear regression model for sports betting
+- Scrapes stats for every team in the NFL for the 2022 season and generates a Python dict sorted by team names
+- TODO: Integrate previous seasons
+- Scraped site: https://www.teamrankings.com/nfl/team-stats/
+'''
+
+headers = []
+
+def get_stat_links(soup_pg, tag_type, class_name):
+    return soup_pg.find_all(tag_type, class_=class_name)
+
+def clean_newlines(raw_data):
+    cleaned = []
+    for rows in raw_data:
+        while rows.count('\n'):
+            rows.remove('\n')
+        cleaned += rows
+    return cleaned
+
+def get_stat_pages(base_url):
+    try:
+        print('Beginning stat page access...')
+        home_pg = ureq(base_url, timeout=30)
+        home_pg_html = home_pg.read()
+        home_pg.close()
+        page_soup = soup(home_pg_html, 'html.parser')
+        stat_chooser = get_stat_links(page_soup, 'ul', 'chooser-list')[0]
+        raw_links = [tag.ul.contents for tag in stat_chooser.contents if tag != '\n' and tag.ul != '\n']
+        cleaned_links = clean_newlines(raw_links)
+        stat_sublinks = [tag.a.get('href') for tag in cleaned_links]
+        return ['https://www.teamrankings.com' + sublink for sublink in stat_sublinks]
+    except requests.exceptions.Timeout:
+        print('Timeout occurred when accessing the following:', base_url)
+        return
+    except Exception as e:
+        print('Error accessing stat page')
+        print('Exception:', e)
+        print('Stat page attempted:', base_url)
+        return
+
+def get_head_data(head):
+    info = [row for row in head.tr.contents if row != '\n']
+    return info
+
+def main():
+    data = {}
+    stat_pages = get_stat_pages('https://www.teamrankings.com/nfl/team-stats/')
+    print('Stat pages retrieved!')
+    for i in range(len(stat_pages)):
+        print('Entering pg', str(i) + ':', stat_pages[i])
+        stat_pg_name = stat_pages[i].split('/')[-1]
+        page = ureq(stat_pages[i], timeout = 30)
+        page_html = page.read()
+        page.close()
+        pg_soup = soup(page_html, 'html.parser')
+        table = get_stat_links(pg_soup, 'table', 'tr-table datatable scrollable')[0]
+        headers = [head.text for head in get_head_data(table.thead)] # for the headers
+        raw_rows = [d_row.contents for d_row in table.tbody.contents if d_row != '\n']
+        cleaned_rows = [stat.text for stat in clean_newlines(raw_rows)]
+        data[stat_pg_name] = {}
+        headers_counter = 0 # For dissecting the cleaned_rows to grab the stats for each team...resets to 0 when the stats for one team are fully grabbed
+        for j in range(32): # Each of the teams in the NFL
+            if headers_counter == len(headers):
+                headers_counter = 0
+            team = cleaned_rows[1]
+            stats = [cleaned_rows[0]] + cleaned_rows[2:len(headers)]
+            data[stat_pg_name][team] = stats
+            cleaned_rows = cleaned_rows[len(headers):] # Removes the data that's already grabbed
+        headers = [headers[0]] + headers[2:] # To remove the team name from the headers
+        if i == 0: break
+
+main()
